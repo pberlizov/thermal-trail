@@ -1,0 +1,79 @@
+image: node:20
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+
+cache:
+  paths:
+    - node_modules/
+
+lint:
+  stage: lint
+  script:
+    - npm install
+    - npm run lint
+
+test:
+  stage: test
+  script:
+    - npm install
+    - npm run test
+
+build:
+  stage: build
+  script:
+    - npm install
+    - npm run build
+  artifacts:
+    paths:
+      - .next/
+      - public/
+      - package.json
+      - package-lock.json
+
+deploy:
+  stage: deploy
+  image: google/cloud-sdk:latest
+  script:
+    # Deploy Cloud Functions
+    - cd functions/thermal-ingest
+    - npm install
+    - gcloud functions deploy processThermalData
+      --gen2
+      --runtime=nodejs20
+      --trigger-event-filters='type=google.cloud.storage.object.v1.finalized'
+      --trigger-event-filters='bucket=$GCS_BUCKET'
+      --entry-point=processThermalData
+      --env-vars-file=.env.yaml
+
+    # Deploy Cloud Run services
+    - cd ../../services/segmentation
+    - npm install
+    - gcloud run deploy segmentation-service
+      --source .
+      --platform managed
+      --region us-central1
+      --allow-unauthenticated
+
+    - cd ../route-optimization
+    - npm install
+    - gcloud run deploy route-optimization-service
+      --source .
+      --platform managed
+      --region us-central1
+      --allow-unauthenticated
+
+    # Deploy Next.js app
+    - cd ../..
+    - gcloud app deploy
+  only:
+    - main
+  environment:
+    name: production
+  when: manual 
